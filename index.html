@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>LAS CUP — Cutie Coin Dash</title>
+<title>LAS CUP: Coin Jumper</title>
 <style>
 *{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#10162b;font-family:system-ui,-apple-system,Segoe UI,sans-serif;color:#fff}
 body{display:grid;place-items:center}.wrap{position:relative;width:min(1100px,100vw);height:min(700px,100vh)}
@@ -30,6 +30,9 @@ h1{margin:0 0 8px;font-size:48px;color:#ffe06b;letter-spacing:-2px}h2{margin:0 0
 <script>
 "use strict";
 const canvas=document.getElementById("game"),ctx=canvas.getContext("2d"),W=1100,H=700,menu=document.getElementById("menu"),panel=document.getElementById("panel");
+const SUPABASE_URL="https://dtbtbugcyhndybqwtfg.supabase.co";
+const SUPABASE_KEY="sb_publishable_r8iZeMnVzPtcJjg0K34BRQ_j2UIbvXv";
+const SUPABASE_REST=SUPABASE_URL+"/rest/v1/leaderboard";
 const keys=new Set();
 const state={screen:"title",level:1,score:0,coins:0,lives:3,cam:0,shake:0,paused:false,checkpoint:null,power:null,powerTimer:0,levelStartScore:0};
 let platforms=[],coins=[],powerups=[],enemies=[],moving=[],particles=[],goalX=0,boss=null,last=performance.now(),acc=0;
@@ -46,35 +49,48 @@ addEventListener("keydown",e=>{keys.add(e.code);if(["Space","ArrowUp","ArrowDown
 addEventListener("keyup",e=>keys.delete(e.code));
 document.querySelectorAll(".touchBtn").forEach(b=>{const on=()=>keys.add(b.dataset.k),off=()=>keys.delete(b.dataset.k);b.addEventListener("pointerdown",e=>{e.preventDefault();on()});b.addEventListener("pointerup",off);b.addEventListener("pointercancel",off);b.addEventListener("pointerleave",off)});
 
-const SUPABASE_URL=window.CCD_SUPABASE_URL||"";
-const SUPABASE_ANON_KEY=window.CCD_SUPABASE_ANON_KEY||"";
-function localScores(){try{return JSON.parse(localStorage.getItem("ccdScores")||"[]").filter(x=>x&&Number.isFinite(x.score)).sort((a,b)=>b.score-a.score).slice(0,10)}catch{return[]}}
-function scores(){return localScores()}
+function scores(){try{return JSON.parse(localStorage.getItem("ccdScores")||"[]").filter(x=>x&&Number.isFinite(x.score)).sort((a,b)=>b.score-a.score).slice(0,10)}catch{return[]}}
+function localSaveScore(name,score){const a=scores();a.push({name:(name||"PLAYER").trim().slice(0,12)||"PLAYER",score,coins:state.coins,level:state.level});a.sort((x,y)=>y.score-x.score);try{localStorage.setItem("ccdScores",JSON.stringify(a.slice(0,10)))}catch{}}
 async function globalScores(){
- if(!SUPABASE_URL||!SUPABASE_ANON_KEY)return localScores();
- try{const r=await fetch(SUPABASE_URL+"/rest/v1/scores?select=name,score,coins&order=score.desc&limit=10",{headers:{apikey:SUPABASE_ANON_KEY,Authorization:"Bearer "+SUPABASE_ANON_KEY}});if(!r.ok)throw new Error("leaderboard");return await r.json()}catch{return localScores()}
+ try{
+   const r=await fetch(SUPABASE_REST+"?select=player_name,score,coins,level,created_at&order=score.desc&limit=10",{headers:{apikey:SUPABASE_KEY,Authorization:"Bearer "+SUPABASE_KEY}});
+   if(!r.ok)throw new Error("leaderboard fetch "+r.status);
+   return await r.json();
+ }catch(e){console.warn("Global leaderboard unavailable; using local scores.",e);return null}
 }
 async function saveScore(name,score){
- const row={name:(name||"PLAYER").trim().slice(0,12)||"PLAYER",score:Number(score)||0,coins:Number(state.coins)||0};
- const a=localScores();a.push(row);a.sort((x,y)=>y.score-x.score);try{localStorage.setItem("ccdScores",JSON.stringify(a.slice(0,10)))}catch{}
- if(SUPABASE_URL&&SUPABASE_ANON_KEY){try{await fetch(SUPABASE_URL+"/rest/v1/scores",{method:"POST",headers:{apikey:SUPABASE_ANON_KEY,Authorization:"Bearer "+SUPABASE_ANON_KEY,"Content-Type":"application/json",Prefer:"return=minimal"},body:JSON.stringify(row)})}catch{}}
-}
-function renderRows(a){return a.length?a.map((x,i)=>`<div class="scoreRow"><span>${i+1}. ${esc(x.name)}</span><b>${x.score}</b></div>`).join(""):"<div style='opacity:.7'>No scores yet — be the first!</div>"}
-function menuTitle(){
- state.screen="title";menu.style.display="flex";panel.innerHTML=`<h1>⚡ CUTIE COIN DASH</h1><div class="sub">Run the office gauntlet. Collect $, survive evil computers and win the LAS CUP.</div><button id="start">START GAME</button><button id="board" style="margin-left:8px;background:#8ee7ff">HIGH SCORES</button>`;
- document.getElementById("start").onclick=()=>startRun();document.getElementById("board").onclick=showScores;
+ const clean=(name||"PLAYER").trim().slice(0,12)||"PLAYER";
+ localSaveScore(clean,score);
+ try{
+   const payload={player_name:clean,score:Math.max(0,Math.floor(score)),coins:Math.max(0,Math.floor(state.coins)),level:Math.max(1,Math.min(5,state.level))};
+   const r=await fetch(SUPABASE_REST,{method:"POST",headers:{apikey:SUPABASE_KEY,Authorization:"Bearer "+SUPABASE_KEY,"Content-Type":"application/json",Prefer:"return=minimal"},body:JSON.stringify(payload)});
+   if(!r.ok)throw new Error("leaderboard save "+r.status);
+   return true;
+ }catch(e){console.warn("Global score save failed; local score was saved.",e);return false}
 }
 async function showScores(){
- panel.innerHTML=`<h2>🌎 LAS CUP WORLDWIDE</h2><div class="sub">Global top 10 scores</div><div id="scores"><div style='opacity:.7'>Loading leaderboard…</div></div><button id="back">BACK</button>`;
+ panel.innerHTML=`<h2>🌎 LAS CUP WORLDWIDE LEADERBOARD</h2><div id="scores"><div style="opacity:.7">Loading global scores...</div></div><button id="back">BACK</button>`;
  document.getElementById("back").onclick=menuTitle;
- const a=await globalScores();const box=document.getElementById("scores");if(box)box.innerHTML=renderRows(a);
+ const global=await globalScores();
+ const a=global||scores();
+ const rows=a.length?a.map((x,i)=>`<div class="scoreRow"><span>${i+1}. ${esc(x.player_name||x.name||"PLAYER")}</span><b>${Number(x.score).toLocaleString()}</b></div>`).join(""):"<div style='opacity:.7'>No scores yet — be the first!</div>";
+ const box=document.getElementById("scores");if(box)box.innerHTML=rows;
+ const note=document.createElement("div");note.style.cssText="font-size:12px;opacity:.65;margin-top:10px";note.textContent=global?"🌎 Live global leaderboard":"Offline/local scores — global board unavailable";panel.appendChild(note);
+}
+function menuTitle(){
+ state.screen="title";menu.style.display="flex";panel.innerHTML=`<h1>🏆 LAS CUP: COIN JUMPER</h1><div class="sub">An office-worker pixel adventure across 5 increasingly dangerous worlds. Beat the computers. Win the LAS CUP!</div><button id="start">START GAME</button><button id="board" style="margin-left:8px;background:#8ee7ff">HIGH SCORES</button>`;
+ document.getElementById("start").onclick=()=>startRun();document.getElementById("board").onclick=showScores;
+}
+function showScores(){
+ const a=scores();panel.innerHTML=`<h2>🏆 HIGH SCORES</h2><div id="scores">${a.length?a.map((x,i)=>`<div class="scoreRow"><span>${i+1}. ${esc(x.name)}</span><b>${x.score}</b></div>`).join(""):"<div style='opacity:.7'>No scores yet — be the first!</div>"}</div><button id="back">BACK</button>`;
+ document.getElementById("back").onclick=menuTitle;
 }
 function esc(x){return String(x).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
 function endScreen(win){
  state.screen=win?"win":"over";menu.style.display="flex";
- panel.innerHTML=win?`<h1>🏆 YOU DID IT!</h1><div class="sub">All 5 levels cleared.</div><div style="font-size:24px;margin:12px">Score: <b>${state.score}</b><br>Coins: ${state.coins}</div><input id="name" maxlength="12" placeholder="Your name"><button id="save">SAVE SCORE</button><button id="again" style="margin-left:8px;background:#8ee7ff">PLAY AGAIN</button>`:
- `<h1 style="color:#ff7188">GAME OVER</h1><div class="sub">You reached Level ${state.level}.</div><div style="font-size:24px;margin:12px">Score: <b>${state.score}</b><br>Coins: ${state.coins}</div><input id="name" maxlength="12" placeholder="Your name"><button id="save">SAVE SCORE</button><button id="again" style="margin-left:8px;background:#8ee7ff">RETRY</button>`;
- document.getElementById("save").onclick=async()=>{const b=document.getElementById("save");b.disabled=true;b.textContent="SAVING…";await saveScore(document.getElementById("name").value,state.score);showScores()};
+ panel.innerHTML=win?`<h1>🏆 YOU DID IT!</h1><div class="sub">All 5 levels cleared.</div><div style="font-size:24px;margin:12px">Score: <b>${state.score}</b><br>Coins: ${state.coins}</div><input id="name" maxlength="12" placeholder="Your name"><button id="save">SAVE TO WORLD LEADERBOARD</button><button id="again" style="margin-left:8px;background:#8ee7ff">PLAY AGAIN</button>`:
+ `<h1 style="color:#ff7188">GAME OVER</h1><div class="sub">You reached Level ${state.level}.</div><div style="font-size:24px;margin:12px">Score: <b>${state.score}</b><br>Coins: ${state.coins}</div><input id="name" maxlength="12" placeholder="Your name"><button id="save">SAVE TO WORLD LEADERBOARD</button><button id="again" style="margin-left:8px;background:#8ee7ff">RETRY</button>`;
+ document.getElementById("save").onclick=async()=>{const btn=document.getElementById("save");btn.disabled=true;btn.textContent="SAVING...";await saveScore(document.getElementById("name").value,state.score);showScores()};
  document.getElementById("again").onclick=()=>startRun();
 }
 function startRun(){state.score=0;state.coins=0;state.lives=3;state.level=1;state.cam=0;state.checkpoint=null;state.power=null;state.powerTimer=0;state.shake=0;state.screen="play";state.paused=false;menu.style.display="none";loadLevel(1)}
@@ -163,30 +179,37 @@ function px(x,y,w,h){ctx.fillRect(Math.round(x),Math.round(y),w,h)}
 function drawHero(x,y){
  const t=performance.now()/1000,bob=player.on?Math.sin(t*10)*1.2:Math.sin(t*7)*2,step=player.on&&Math.abs(player.vx)>.7?Math.sin(t*18)*3:0;
  ctx.save();ctx.translate(Math.round(x),Math.round(y+bob));ctx.scale(player.face,1);
- ctx.fillStyle="#352442";px(2,44,31,5);
- // ambiguous office worker: neat hair, shirt, tie, ID badge, trousers and briefcase
- ctx.fillStyle="#20233a";px(9,1,21,8);px(6,5,27,7);
- ctx.fillStyle="#f0c6a4";px(8,9,25,23);px(11,5,19,8);
- ctx.fillStyle="#20233a";px(10,16,5,6);px(25,16,5,6);ctx.fillStyle="#fff";px(11,16,2,2);px(26,16,2,2);
- ctx.fillStyle="#d89d82";px(17,24,8,3);ctx.fillStyle="#4a2942";px(19,28,5,2);
- ctx.fillStyle="#f7f7f2";px(7,30,28,17);px(12,27,18,7);
- ctx.fillStyle="#d83d5b";px(19,31,5,13);px(17,31,9,4);
- ctx.fillStyle="#8ee7ff";px(27,34,7,9);ctx.fillStyle="#17213b";px(29,35,3,3);
- ctx.fillStyle="#f0c6a4";px(2,34,8,8);px(32,34,8,8);
- ctx.fillStyle="#26304b";px(7,44+Math.max(0,step),11,9);px(24,44+Math.max(0,-step),11,9);
- ctx.fillStyle="#fff";px(4,49+Math.max(0,step),15,4);px(22,49+Math.max(0,-step),15,4);
+ ctx.fillStyle="#2d2740";px(4,44,28,5);
  // briefcase
- ctx.fillStyle="#7b4b35";px(-6,37,12,10);ctx.fillStyle="#e5b64e";px(-2,35,5,3);
- if(state.power){ctx.globalAlpha=.28+.12*Math.sin(t*9);ctx.strokeStyle=state.power==="shield"?"#66e3ff":state.power==="super"?"#ff6bc5":"#8df06a";ctx.lineWidth=3;ctx.strokeRect(-2,0,43,54);ctx.globalAlpha=1}
+ ctx.fillStyle="#9b633f";px(-7,31,12,11);ctx.fillStyle="#e0a15e";px(-5,28,8,4);ctx.fillStyle="#5a392c";px(-1,34,2,5);
+ // hair/head
+ ctx.fillStyle="#d7a77b";px(8,4,20,10);ctx.fillStyle="#46333b";px(7,8,23,22);px(11,3,16,8);px(8,13,4,8);px(27,11,4,7);
+ ctx.fillStyle="#d7a77b";px(10,13,18,17);ctx.fillStyle="#22243a";px(14,19,3,4);px(22,19,3,4);ctx.fillStyle="#8a4f4b";px(17,25,8,2);
+ // neck, shirt, tie
+ ctx.fillStyle="#d7a77b";px(17,29,8,5);ctx.fillStyle="#f4f5f7";px(7,32,28,15);px(3,34,8,10);px(31,34,8,10);
+ ctx.fillStyle="#273b72";px(19,33,5,13);ctx.fillStyle="#e24e5e";px(19,45,5,4);
+ // ID badge
+ ctx.fillStyle="#dbe8ff";px(27,35,7,9);ctx.fillStyle="#4f8bd9";px(28,36,5,3);ctx.fillStyle="#39415c";px(28,40,5,2);
+ // trousers and shoes
+ ctx.fillStyle="#39445e";px(8,46,11,7);px(24,46,11,7);ctx.fillStyle="#f2f2f2";px(5,50+Math.max(0,step),14,5);px(23,50+Math.max(0,-step),14,5);
+ if(state.power){ctx.globalAlpha=.28+.12*Math.sin(t*9);ctx.strokeStyle=state.power==="shield"?"#66e3ff":state.power==="super"?"#ff6bc5":"#8df06a";ctx.lineWidth=3;ctx.strokeRect(-9,0,48,57);ctx.globalAlpha=1}
  ctx.restore();
 }
 function drawEnemy(e){
- const x=e.x,y=e.y;ctx.save();
- // Evil computers with distinct hardware/function silhouettes
- if(e.type==="flyer"){ctx.fillStyle="#55627f";px(x+7,y+8,28,23);px(x+1,y+14,8,7);px(x+33,y+14,8,7);ctx.fillStyle="#1b2035";px(x+11,y+13,20,12);ctx.fillStyle="#ff465f";px(x+15,y+16,4,4);px(x+24,y+16,4,4);ctx.fillStyle="#9aa8c2";px(x+11,y+2,20,6);}
- else if(e.type==="tank"){ctx.fillStyle="#3c465e";px(x+2,y+8,44,31);px(x+8,y+2,32,10);ctx.fillStyle="#151a2b";px(x+10,y+16,28,11);ctx.fillStyle="#ff4058";px(x+14,y+18,5,5);px(x+28,y+18,5,5);ctx.fillStyle="#8996ad";px(x-2,y+38,14,5);px(x+36,y+38,14,5);}
- else if(e.type==="charger"){ctx.fillStyle="#7b3f5b";px(x+4,y+8,34,28);px(x+9,y+3,24,8);ctx.fillStyle="#172039";px(x+10,y+14,24,12);ctx.fillStyle="#ff4058";px(x+13,y+17,5,5);px(x+26,y+17,5,5);ctx.fillStyle="#e9b44c";px(x+15,y+27,13,4);px(x-3,y+32,8,5);}
- else {ctx.fillStyle="#59677f";px(x+5,y+7,32,29);px(x+10,y+2,22,7);ctx.fillStyle="#151a2b";px(x+9,y+14,24,12);ctx.fillStyle="#ff4058";px(x+12,y+17,5,5);px(x+27,y+17,5,5);ctx.fillStyle="#63d7ff";px(x+16,y+27,10,4);ctx.fillStyle="#aab5c7";px(x+1,y+36,9,4);px(x+32,y+36,9,4);}
+ const x=Math.round(e.x),y=Math.round(e.y);ctx.save();
+ const body=e.type==="tank"?46:38;
+ // antenna / evil computer casing
+ ctx.fillStyle=e.type==="tank"?"#343b52":e.type==="charger"?"#5a2634":e.type==="flyer"?"#303a66":"#343b4d";
+ px(x+3,y+8,body,27);px(x+8,y+3,body-10,10);
+ ctx.fillStyle="#171b2b";px(x+8,y+14,body-10,13);
+ // screen eyes
+ ctx.fillStyle=e.type==="charger"?"#ff5d6c":"#65f0d0";px(x+12,y+17,6,5);px(x+body-17,y+17,6,5);
+ ctx.fillStyle="#ff5d6c";px(x+15,y+25,body-21,3);
+ // antenna
+ ctx.fillStyle="#59647d";px(x+body/2-2,y-5,4,8);ctx.fillStyle="#ff5d6c";ctx.fillRect(x+body/2-3,y-9,6,5);
+ if(e.type==="flyer"){ctx.fillStyle="#7184c8";px(x-10,y+14,12,7);px(x+body+1,y+14,12,7)}
+ if(e.type==="tank"){ctx.fillStyle="#69758f";px(x-4,y+34,15,6);px(x+body-11,y+34,15,6);ctx.fillStyle="#b6c1d8";px(x+body/2-5,y+1,10,5)}
+ if(e.type==="charger"){ctx.fillStyle="#ffca55";px(x-4,y+20,6,7);px(x+body-2,y+20,6,7)}
  ctx.restore();
 }
 function draw(){
@@ -196,17 +219,19 @@ function draw(){
  for(const q of platforms){ctx.fillStyle="#77d46b";px(q[0],q[1],q[2],12);ctx.fillStyle="#a85e3b";px(q[0],q[1]+12,q[2],q[3]-12)}
  for(const q of moving){ctx.fillStyle="#e6a24b";px(q.x,q.y,q.w,q.h);ctx.fillStyle="#fff0a0";px(q.x+8,q.y+4,q.w-16,4)}
  if(state.level===5){
-   ctx.fillStyle="#6b4760";px(goalX+25,405,10,150);ctx.fillStyle="#d6a63e";px(goalX+15,550,30,7);
-   ctx.fillStyle="#f7cf55";ctx.beginPath();ctx.arc(goalX+30,390,23,0,7);ctx.fill();ctx.fillStyle="#9b5d2e";ctx.fillRect(goalX+17,372,26,9);
-   ctx.fillStyle="#f9e58b";ctx.fillRect(goalX+5,375,9,23);ctx.fillRect(goalX+46,375,9,23);ctx.fillStyle="#b77a27";ctx.fillRect(goalX+22,409,16,8);
-   ctx.fillStyle="#fff3a8";ctx.font="900 15px system-ui";ctx.textAlign="center";ctx.fillText("LAS CUP",goalX+30,440);ctx.textAlign="left";
- }else{ctx.fillStyle="#593c75";px(goalX,360,8,225);ctx.fillStyle="#ff5e83";px(goalX+8,360,92,52);ctx.fillStyle="#ffe06b";ctx.beginPath();ctx.arc(goalX+4,348,12,0,7);ctx.fill();}
- for(const q of coins)if(!q.got){const yy=q.y+Math.sin(t*4+q.phase)*5;ctx.fillStyle="#49d17d";ctx.font="900 24px system-ui";ctx.textAlign="center";ctx.fillText("$",q.x,yy+8);ctx.textAlign="left"}
+   // LAS CUP trophy
+   ctx.fillStyle="#8b6730";px(goalX+27,535,8,35);px(goalX+12,568,38,7);
+   ctx.fillStyle="#ffd447";px(goalX+19,390,26,115);px(goalX+10,400,44,45);px(goalX+4,405,10,48);px(goalX+50,405,10,48);
+   ctx.fillStyle="#fff0a0";px(goalX+24,410,16,35);ctx.fillStyle="#5a4025";ctx.font="900 11px system-ui";ctx.textAlign="center";ctx.fillText("LAS",goalX+32,430);ctx.fillText("CUP",goalX+32,444);ctx.textAlign="left";
+ }else{
+   ctx.fillStyle="#593c75";px(goalX,360,8,225);ctx.fillStyle="#ff5e83";px(goalX+8,360,92,52);ctx.fillStyle="#ffe06b";ctx.beginPath();ctx.arc(goalX+4,348,12,0,7);ctx.fill();
+ }
+ for(const q of coins)if(!q.got){const yy=q.y+Math.sin(t*4+q.phase)*5;ctx.fillStyle="#6ee58b";ctx.font="900 25px system-ui";ctx.textAlign="center";ctx.fillText("$",q.x,yy+9);ctx.textAlign="left"}
  for(const q of powerups)if(!q.got){const yy=q.y+Math.sin(t*4+q.x)*6;ctx.fillStyle=q.type==="shield"?"#66e3ff":q.type==="super"?"#ff6bc5":"#8df06a";ctx.beginPath();ctx.arc(q.x,yy,17,0,7);ctx.fill();ctx.fillStyle="#18203a";ctx.font="900 18px system-ui";ctx.textAlign="center";ctx.fillText(q.type==="shield"?"S":q.type==="super"?"★":"D",q.x,yy+7);ctx.textAlign="left"}
  for(const e of enemies)if(e.alive)drawEnemy(e);
  if(boss){ctx.fillStyle="#7b315f";px(boss.x,boss.y,boss.w,boss.h);ctx.fillStyle="#ffcc59";px(boss.x+12,boss.y+16,12,10);px(boss.x+52,boss.y+16,12,10);ctx.fillStyle="#fff";px(boss.x+16,boss.y+20,4,4);px(boss.x+56,boss.y+20,4,4);ctx.fillStyle="#ff7188";px(boss.x+27,boss.y+48,25,8)}
  if(player.inv%8<4)drawHero(player.x,player.y);for(const a of particles){ctx.fillStyle="#fff0a0";px(a.x,a.y,5,5)}ctx.restore();
- ctx.fillStyle="#10162ddd";ctx.fillRect(16,16,505,88);ctx.fillStyle="#ffe06b";ctx.font="900 13px system-ui";ctx.fillText("⚡ CUTIE",445,38);ctx.fillStyle="#fff";ctx.font="bold 17px system-ui";ctx.fillText(`LEVEL ${state.level}/5 • ${LEVELS[state.level-1].name}`,30,40);ctx.fillText(`$ ${state.coins} • SCORE ${state.score}`,30,64);ctx.fillText(`♥ ${state.lives}   BEST ${scores()[0]?.score||0}`,30,88);
+ ctx.fillStyle="#10162ddd";ctx.fillRect(16,16,505,88);ctx.fillStyle="#ffe06b";ctx.font="900 13px system-ui";ctx.fillText("🏆 LAS CUP",445,38);ctx.fillStyle="#fff";ctx.font="bold 17px system-ui";ctx.fillText(`LEVEL ${state.level}/5 • ${LEVELS[state.level-1].name}`,30,40);ctx.fillText(`$ ${state.coins} • SCORE ${state.score}`,30,64);ctx.fillText(`♥ ${state.lives}   BEST ${scores()[0]?.score||0}`,30,88);
  if(state.power){ctx.fillStyle="#8ee7ff";ctx.fillText(`POWER ${state.power.toUpperCase()} ${Math.ceil(state.powerTimer/60)}s`,275,88)}
  if(boss&&boss.active){ctx.fillStyle="#10162ddd";ctx.fillRect(W/2-190,18,380,28);ctx.fillStyle="#ff7188";ctx.fillRect(W/2-184,24,368*(boss.hp/boss.maxHp),16);ctx.strokeStyle="#fff";ctx.strokeRect(W/2-190,18,380,28)}
  if(state.paused){ctx.fillStyle="#10162be8";ctx.fillRect(0,0,W,H);ctx.textAlign="center";ctx.font="900 55px system-ui";ctx.fillStyle="#ffe06b";ctx.fillText("PAUSED",W/2,300);ctx.font="600 18px system-ui";ctx.fillStyle="#fff";ctx.fillText("Press P to continue",W/2,345);ctx.textAlign="left"}}
