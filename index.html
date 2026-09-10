@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>Cutie Coin Dash</title>
+<title>LAS CUP — Cutie Coin Dash</title>
 <style>
 *{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#10162b;font-family:system-ui,-apple-system,Segoe UI,sans-serif;color:#fff}
 body{display:grid;place-items:center}.wrap{position:relative;width:min(1100px,100vw);height:min(700px,100vh)}
@@ -46,22 +46,35 @@ addEventListener("keydown",e=>{keys.add(e.code);if(["Space","ArrowUp","ArrowDown
 addEventListener("keyup",e=>keys.delete(e.code));
 document.querySelectorAll(".touchBtn").forEach(b=>{const on=()=>keys.add(b.dataset.k),off=()=>keys.delete(b.dataset.k);b.addEventListener("pointerdown",e=>{e.preventDefault();on()});b.addEventListener("pointerup",off);b.addEventListener("pointercancel",off);b.addEventListener("pointerleave",off)});
 
-function scores(){try{return JSON.parse(localStorage.getItem("ccdScores")||"[]").filter(x=>x&&Number.isFinite(x.score)).sort((a,b)=>b.score-a.score).slice(0,10)}catch{return[]}}
-function saveScore(name,score){const a=scores();a.push({name:(name||"PLAYER").trim().slice(0,12)||"PLAYER",score,coins:state.coins});a.sort((x,y)=>y.score-x.score);try{localStorage.setItem("ccdScores",JSON.stringify(a.slice(0,10)))}catch{}}
+const SUPABASE_URL=window.CCD_SUPABASE_URL||"";
+const SUPABASE_ANON_KEY=window.CCD_SUPABASE_ANON_KEY||"";
+function localScores(){try{return JSON.parse(localStorage.getItem("ccdScores")||"[]").filter(x=>x&&Number.isFinite(x.score)).sort((a,b)=>b.score-a.score).slice(0,10)}catch{return[]}}
+function scores(){return localScores()}
+async function globalScores(){
+ if(!SUPABASE_URL||!SUPABASE_ANON_KEY)return localScores();
+ try{const r=await fetch(SUPABASE_URL+"/rest/v1/scores?select=name,score,coins&order=score.desc&limit=10",{headers:{apikey:SUPABASE_ANON_KEY,Authorization:"Bearer "+SUPABASE_ANON_KEY}});if(!r.ok)throw new Error("leaderboard");return await r.json()}catch{return localScores()}
+}
+async function saveScore(name,score){
+ const row={name:(name||"PLAYER").trim().slice(0,12)||"PLAYER",score:Number(score)||0,coins:Number(state.coins)||0};
+ const a=localScores();a.push(row);a.sort((x,y)=>y.score-x.score);try{localStorage.setItem("ccdScores",JSON.stringify(a.slice(0,10)))}catch{}
+ if(SUPABASE_URL&&SUPABASE_ANON_KEY){try{await fetch(SUPABASE_URL+"/rest/v1/scores",{method:"POST",headers:{apikey:SUPABASE_ANON_KEY,Authorization:"Bearer "+SUPABASE_ANON_KEY,"Content-Type":"application/json",Prefer:"return=minimal"},body:JSON.stringify(row)})}catch{}}
+}
+function renderRows(a){return a.length?a.map((x,i)=>`<div class="scoreRow"><span>${i+1}. ${esc(x.name)}</span><b>${x.score}</b></div>`).join(""):"<div style='opacity:.7'>No scores yet — be the first!</div>"}
 function menuTitle(){
- state.screen="title";menu.style.display="flex";panel.innerHTML=`<h1>⚡ CUTIE COIN DASH</h1><div class="sub">A tiny pixel adventure across 5 increasingly dangerous worlds.</div><button id="start">START GAME</button><button id="board" style="margin-left:8px;background:#8ee7ff">HIGH SCORES</button>`;
+ state.screen="title";menu.style.display="flex";panel.innerHTML=`<h1>⚡ CUTIE COIN DASH</h1><div class="sub">Run the office gauntlet. Collect $, survive evil computers and win the LAS CUP.</div><button id="start">START GAME</button><button id="board" style="margin-left:8px;background:#8ee7ff">HIGH SCORES</button>`;
  document.getElementById("start").onclick=()=>startRun();document.getElementById("board").onclick=showScores;
 }
-function showScores(){
- const a=scores();panel.innerHTML=`<h2>🏆 HIGH SCORES</h2><div id="scores">${a.length?a.map((x,i)=>`<div class="scoreRow"><span>${i+1}. ${esc(x.name)}</span><b>${x.score}</b></div>`).join(""):"<div style='opacity:.7'>No scores yet — be the first!</div>"}</div><button id="back">BACK</button>`;
+async function showScores(){
+ panel.innerHTML=`<h2>🌎 LAS CUP WORLDWIDE</h2><div class="sub">Global top 10 scores</div><div id="scores"><div style='opacity:.7'>Loading leaderboard…</div></div><button id="back">BACK</button>`;
  document.getElementById("back").onclick=menuTitle;
+ const a=await globalScores();const box=document.getElementById("scores");if(box)box.innerHTML=renderRows(a);
 }
 function esc(x){return String(x).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
 function endScreen(win){
  state.screen=win?"win":"over";menu.style.display="flex";
  panel.innerHTML=win?`<h1>🏆 YOU DID IT!</h1><div class="sub">All 5 levels cleared.</div><div style="font-size:24px;margin:12px">Score: <b>${state.score}</b><br>Coins: ${state.coins}</div><input id="name" maxlength="12" placeholder="Your name"><button id="save">SAVE SCORE</button><button id="again" style="margin-left:8px;background:#8ee7ff">PLAY AGAIN</button>`:
  `<h1 style="color:#ff7188">GAME OVER</h1><div class="sub">You reached Level ${state.level}.</div><div style="font-size:24px;margin:12px">Score: <b>${state.score}</b><br>Coins: ${state.coins}</div><input id="name" maxlength="12" placeholder="Your name"><button id="save">SAVE SCORE</button><button id="again" style="margin-left:8px;background:#8ee7ff">RETRY</button>`;
- document.getElementById("save").onclick=()=>{saveScore(document.getElementById("name").value,state.score);showScores()};
+ document.getElementById("save").onclick=async()=>{const b=document.getElementById("save");b.disabled=true;b.textContent="SAVING…";await saveScore(document.getElementById("name").value,state.score);showScores()};
  document.getElementById("again").onclick=()=>startRun();
 }
 function startRun(){state.score=0;state.coins=0;state.lives=3;state.level=1;state.cam=0;state.checkpoint=null;state.power=null;state.powerTimer=0;state.shake=0;state.screen="play";state.paused=false;menu.style.display="none";loadLevel(1)}
@@ -148,86 +161,52 @@ function levelWFor(){return LEVELS[state.level-1].width}
 function burst(x,y,n=10){for(let i=0;i<n;i++)particles.push({x,y,vx:(Math.random()-.5)*5,vy:(Math.random()-.7)*5,t:25+Math.random()*20})}
 function px(x,y,w,h){ctx.fillRect(Math.round(x),Math.round(y),w,h)}
 function drawHero(x,y){
- const t=performance.now()/1000;
- const bob=player.on?Math.sin(t*10)*1.2:Math.sin(t*7)*2;
- const step=player.on&&Math.abs(player.vx)>.7?Math.sin(t*18)*3:0;
+ const t=performance.now()/1000,bob=player.on?Math.sin(t*10)*1.2:Math.sin(t*7)*2,step=player.on&&Math.abs(player.vx)>.7?Math.sin(t*18)*3:0;
  ctx.save();ctx.translate(Math.round(x),Math.round(y+bob));ctx.scale(player.face,1);
-
- // soft pixel shadow
  ctx.fillStyle="#352442";px(2,44,31,5);
-
- // tail: chunky lightning bolt
- ctx.fillStyle="#f7c83d";
- px(30,31,8,8);px(36,26,8,8);px(42,20,8,9);px(39,16,8,7);
- ctx.fillStyle="#ffe88a";px(38,27,4,4);
-
- // ears with dark tips
- ctx.fillStyle="#f7c83d";px(3,1,11,19);px(27,1,11,19);
- ctx.fillStyle="#44304f";px(4,1,9,7);px(29,1,8,7);
- ctx.fillStyle="#ffdf65";px(7,8,4,7);px(30,8,4,7);
-
- // back/head silhouette
- ctx.fillStyle="#eebc34";px(6,9,29,28);px(10,4,21,10);
-
- // face highlights
- ctx.fillStyle="#ffe37a";px(9,10,8,8);px(23,10,8,8);
-
- // eyes
- ctx.fillStyle="#20223a";
- if(Math.floor(t*2)%7===0){px(12,17,6,2);px(25,17,6,2)}
- else{px(12,15,6,7);px(25,15,6,7);ctx.fillStyle="#fff";px(13,15,2,2);px(26,15,2,2)}
-
- // muzzle + smile
- ctx.fillStyle="#f4caa9";px(15,24,14,7);px(18,27,7,4);
- ctx.fillStyle="#4a2942";px(19,28,5,2);
-
- // electric cheek marks
- ctx.fillStyle="#ef526c";px(5,23,9,8);px(29,23,8,8);
- ctx.fillStyle="#ff7b8d";px(7,24,4,3);px(31,24,4,3);
-
- // scarf
- ctx.fillStyle="#565bd8";px(7,33,27,9);px(13,31,16,5);
- ctx.fillStyle="#8de7ff";px(12,35,17,4);
- px(27,40,7,8);
-
- // little arm
- ctx.fillStyle="#f7c83d";px(2,34,8,8);px(31,34,8,8);
- ctx.fillStyle="#ffe37a";px(2,39,7,4);px(32,39,6,4);
-
- // legs / sneakers with running animation
- ctx.fillStyle="#5a3d7a";
- px(7,42+Math.max(0,step),10,8);
- px(23,42+Math.max(0,-step),11,8);
- ctx.fillStyle="#f1e8ff";
- px(5,47+Math.max(0,step),13,4);
- px(23,47+Math.max(0,-step),13,4);
-
- // active power-up aura
- if(state.power){
-   ctx.globalAlpha=.28+.12*Math.sin(t*9);
-   ctx.strokeStyle=state.power==="shield"?"#66e3ff":state.power==="super"?"#ff6bc5":"#8df06a";
-   ctx.lineWidth=3;ctx.strokeRect(1,0,38,53);
-   ctx.globalAlpha=1;
- }
+ // ambiguous office worker: neat hair, shirt, tie, ID badge, trousers and briefcase
+ ctx.fillStyle="#20233a";px(9,1,21,8);px(6,5,27,7);
+ ctx.fillStyle="#f0c6a4";px(8,9,25,23);px(11,5,19,8);
+ ctx.fillStyle="#20233a";px(10,16,5,6);px(25,16,5,6);ctx.fillStyle="#fff";px(11,16,2,2);px(26,16,2,2);
+ ctx.fillStyle="#d89d82";px(17,24,8,3);ctx.fillStyle="#4a2942";px(19,28,5,2);
+ ctx.fillStyle="#f7f7f2";px(7,30,28,17);px(12,27,18,7);
+ ctx.fillStyle="#d83d5b";px(19,31,5,13);px(17,31,9,4);
+ ctx.fillStyle="#8ee7ff";px(27,34,7,9);ctx.fillStyle="#17213b";px(29,35,3,3);
+ ctx.fillStyle="#f0c6a4";px(2,34,8,8);px(32,34,8,8);
+ ctx.fillStyle="#26304b";px(7,44+Math.max(0,step),11,9);px(24,44+Math.max(0,-step),11,9);
+ ctx.fillStyle="#fff";px(4,49+Math.max(0,step),15,4);px(22,49+Math.max(0,-step),15,4);
+ // briefcase
+ ctx.fillStyle="#7b4b35";px(-6,37,12,10);ctx.fillStyle="#e5b64e";px(-2,35,5,3);
+ if(state.power){ctx.globalAlpha=.28+.12*Math.sin(t*9);ctx.strokeStyle=state.power==="shield"?"#66e3ff":state.power==="super"?"#ff6bc5":"#8df06a";ctx.lineWidth=3;ctx.strokeRect(-2,0,43,54);ctx.globalAlpha=1}
  ctx.restore();
 }
-function drawEnemy(e){const x=e.x,y=e.y;ctx.save();if(e.type==="flyer"){ctx.fillStyle="#b26cff";px(x+5,y+10,30,22);px(x-3,y+14,10,10);px(x+34,y+14,10,10);ctx.fillStyle="#20233d";px(x+11,y+16,5,6);px(x+26,y+16,5,6)}
-else if(e.type==="tank"){ctx.fillStyle="#4b536d";px(x+3,y+8,42,29);px(x+8,y+2,32,12);ctx.fillStyle="#a7b3c8";px(x+10,y+16,8,7);px(x+30,y+16,8,7);ctx.fillStyle="#ef5d78";px(x+17,y+28,15,5)}
-else if(e.type==="charger"){ctx.fillStyle="#ef6b45";px(x+4,y+9,34,26);px(x+9,y+4,24,10);ctx.fillStyle="#20233d";px(x+11,y+15,5,6);px(x+27,y+15,5,6);ctx.fillStyle="#ffd45b";px(x+15,y+25,13,5)}
-else{ctx.fillStyle="#6b4b9a";px(x+5,y+10,32,23);px(x+10,y+5,22,8);ctx.fillStyle="#f7d6c3";px(x+9,y+17,7,7);px(x+27,y+17,7,7);ctx.fillStyle="#25233b";px(x+11,y+17,4,5);px(x+28,y+17,4,5);ctx.fillStyle="#ff7a8a";px(x+15,y+25,13,5)}ctx.restore()}
+function drawEnemy(e){
+ const x=e.x,y=e.y;ctx.save();
+ // Evil computers with distinct hardware/function silhouettes
+ if(e.type==="flyer"){ctx.fillStyle="#55627f";px(x+7,y+8,28,23);px(x+1,y+14,8,7);px(x+33,y+14,8,7);ctx.fillStyle="#1b2035";px(x+11,y+13,20,12);ctx.fillStyle="#ff465f";px(x+15,y+16,4,4);px(x+24,y+16,4,4);ctx.fillStyle="#9aa8c2";px(x+11,y+2,20,6);}
+ else if(e.type==="tank"){ctx.fillStyle="#3c465e";px(x+2,y+8,44,31);px(x+8,y+2,32,10);ctx.fillStyle="#151a2b";px(x+10,y+16,28,11);ctx.fillStyle="#ff4058";px(x+14,y+18,5,5);px(x+28,y+18,5,5);ctx.fillStyle="#8996ad";px(x-2,y+38,14,5);px(x+36,y+38,14,5);}
+ else if(e.type==="charger"){ctx.fillStyle="#7b3f5b";px(x+4,y+8,34,28);px(x+9,y+3,24,8);ctx.fillStyle="#172039";px(x+10,y+14,24,12);ctx.fillStyle="#ff4058";px(x+13,y+17,5,5);px(x+26,y+17,5,5);ctx.fillStyle="#e9b44c";px(x+15,y+27,13,4);px(x-3,y+32,8,5);}
+ else {ctx.fillStyle="#59677f";px(x+5,y+7,32,29);px(x+10,y+2,22,7);ctx.fillStyle="#151a2b";px(x+9,y+14,24,12);ctx.fillStyle="#ff4058";px(x+12,y+17,5,5);px(x+27,y+17,5,5);ctx.fillStyle="#63d7ff";px(x+16,y+27,10,4);ctx.fillStyle="#aab5c7";px(x+1,y+36,9,4);px(x+32,y+36,9,4);}
+ ctx.restore();
+}
 function draw(){
  const t=performance.now()/1000;ctx.save();ctx.translate(-state.cam+(state.shake?Math.random()*state.shake-state.shake/2:0),0);
  ctx.fillStyle="#7bdcff";ctx.fillRect(state.cam-20,0,W+40,H);ctx.fillStyle="#fff6b3";ctx.beginPath();ctx.arc(state.cam+820,115,52,0,7);ctx.fill();
  ctx.fillStyle="#58c98c";for(let i=-1;i<13;i++){let x=state.cam+i*700;ctx.beginPath();ctx.moveTo(x,585);ctx.lineTo(x+280,300);ctx.lineTo(x+560,585);ctx.fill()}
  for(const q of platforms){ctx.fillStyle="#77d46b";px(q[0],q[1],q[2],12);ctx.fillStyle="#a85e3b";px(q[0],q[1]+12,q[2],q[3]-12)}
  for(const q of moving){ctx.fillStyle="#e6a24b";px(q.x,q.y,q.w,q.h);ctx.fillStyle="#fff0a0";px(q.x+8,q.y+4,q.w-16,4)}
- ctx.fillStyle="#593c75";px(goalX,360,8,225);ctx.fillStyle="#ff5e83";px(goalX+8,360,92,52);ctx.fillStyle="#ffe06b";ctx.beginPath();ctx.arc(goalX+4,348,12,0,7);ctx.fill();
- for(const q of coins)if(!q.got){const yy=q.y+Math.sin(t*4+q.phase)*5;ctx.fillStyle="#ffd447";ctx.beginPath();ctx.arc(q.x,yy,11,0,7);ctx.fill()}
+ if(state.level===5){
+   ctx.fillStyle="#6b4760";px(goalX+25,405,10,150);ctx.fillStyle="#d6a63e";px(goalX+15,550,30,7);
+   ctx.fillStyle="#f7cf55";ctx.beginPath();ctx.arc(goalX+30,390,23,0,7);ctx.fill();ctx.fillStyle="#9b5d2e";ctx.fillRect(goalX+17,372,26,9);
+   ctx.fillStyle="#f9e58b";ctx.fillRect(goalX+5,375,9,23);ctx.fillRect(goalX+46,375,9,23);ctx.fillStyle="#b77a27";ctx.fillRect(goalX+22,409,16,8);
+   ctx.fillStyle="#fff3a8";ctx.font="900 15px system-ui";ctx.textAlign="center";ctx.fillText("LAS CUP",goalX+30,440);ctx.textAlign="left";
+ }else{ctx.fillStyle="#593c75";px(goalX,360,8,225);ctx.fillStyle="#ff5e83";px(goalX+8,360,92,52);ctx.fillStyle="#ffe06b";ctx.beginPath();ctx.arc(goalX+4,348,12,0,7);ctx.fill();}
+ for(const q of coins)if(!q.got){const yy=q.y+Math.sin(t*4+q.phase)*5;ctx.fillStyle="#49d17d";ctx.font="900 24px system-ui";ctx.textAlign="center";ctx.fillText("$",q.x,yy+8);ctx.textAlign="left"}
  for(const q of powerups)if(!q.got){const yy=q.y+Math.sin(t*4+q.x)*6;ctx.fillStyle=q.type==="shield"?"#66e3ff":q.type==="super"?"#ff6bc5":"#8df06a";ctx.beginPath();ctx.arc(q.x,yy,17,0,7);ctx.fill();ctx.fillStyle="#18203a";ctx.font="900 18px system-ui";ctx.textAlign="center";ctx.fillText(q.type==="shield"?"S":q.type==="super"?"★":"D",q.x,yy+7);ctx.textAlign="left"}
  for(const e of enemies)if(e.alive)drawEnemy(e);
  if(boss){ctx.fillStyle="#7b315f";px(boss.x,boss.y,boss.w,boss.h);ctx.fillStyle="#ffcc59";px(boss.x+12,boss.y+16,12,10);px(boss.x+52,boss.y+16,12,10);ctx.fillStyle="#fff";px(boss.x+16,boss.y+20,4,4);px(boss.x+56,boss.y+20,4,4);ctx.fillStyle="#ff7188";px(boss.x+27,boss.y+48,25,8)}
  if(player.inv%8<4)drawHero(player.x,player.y);for(const a of particles){ctx.fillStyle="#fff0a0";px(a.x,a.y,5,5)}ctx.restore();
- ctx.fillStyle="#10162ddd";ctx.fillRect(16,16,505,88);ctx.fillStyle="#ffe06b";ctx.font="900 13px system-ui";ctx.fillText("⚡ CUTIE",445,38);ctx.fillStyle="#fff";ctx.font="bold 17px system-ui";ctx.fillText(`LEVEL ${state.level}/5 • ${LEVELS[state.level-1].name}`,30,40);ctx.fillText(`🪙 ${state.coins} • SCORE ${state.score}`,30,64);ctx.fillText(`♥ ${state.lives}   BEST ${scores()[0]?.score||0}`,30,88);
+ ctx.fillStyle="#10162ddd";ctx.fillRect(16,16,505,88);ctx.fillStyle="#ffe06b";ctx.font="900 13px system-ui";ctx.fillText("⚡ CUTIE",445,38);ctx.fillStyle="#fff";ctx.font="bold 17px system-ui";ctx.fillText(`LEVEL ${state.level}/5 • ${LEVELS[state.level-1].name}`,30,40);ctx.fillText(`$ ${state.coins} • SCORE ${state.score}`,30,64);ctx.fillText(`♥ ${state.lives}   BEST ${scores()[0]?.score||0}`,30,88);
  if(state.power){ctx.fillStyle="#8ee7ff";ctx.fillText(`POWER ${state.power.toUpperCase()} ${Math.ceil(state.powerTimer/60)}s`,275,88)}
  if(boss&&boss.active){ctx.fillStyle="#10162ddd";ctx.fillRect(W/2-190,18,380,28);ctx.fillStyle="#ff7188";ctx.fillRect(W/2-184,24,368*(boss.hp/boss.maxHp),16);ctx.strokeStyle="#fff";ctx.strokeRect(W/2-190,18,380,28)}
  if(state.paused){ctx.fillStyle="#10162be8";ctx.fillRect(0,0,W,H);ctx.textAlign="center";ctx.font="900 55px system-ui";ctx.fillStyle="#ffe06b";ctx.fillText("PAUSED",W/2,300);ctx.font="600 18px system-ui";ctx.fillStyle="#fff";ctx.fillText("Press P to continue",W/2,345);ctx.textAlign="left"}}
